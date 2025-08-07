@@ -1,6 +1,6 @@
-# src/mesh_utils.py
 import numpy as np
-import trimesh
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import dijkstra
 
 __all__ = [
     "load_freesurfer_surf", "save_vtk",
@@ -8,13 +8,11 @@ __all__ = [
 ]
 
 def load_freesurfer_surf(path):
-    """Return (V, F) from a FreeSurfer .surf/.T2 file."""
     from nibabel.freesurfer.io import read_geometry
     v, f = read_geometry(str(path))
     return v.astype(np.float64), f.astype(np.int32)
 
 def save_vtk(filename, verts, faces):
-    """Write PolyData .vtk (faces must be (n,3))."""
     import pyvista as pv
     faces_pv = np.hstack([np.full((faces.shape[0], 1), 3, dtype=np.int32), faces])
     pv.PolyData(verts, faces_pv.ravel()).save(filename)
