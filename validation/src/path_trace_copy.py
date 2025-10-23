@@ -243,41 +243,36 @@ def _print_length_stats(name: str, lengths: list[float]) -> None:
     print(f"  min    : {min_val:.3f}")
     print(f"  max    : {max_val:.3f}")
 
+import numpy as np
+from collections import Counter
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import dijkstra
+
+def _find_boundary_vertices(F: np.ndarray) -> np.ndarray:
+    # Boundary edges appear exactly once
+    edges = []
+    for a, b, c in F:
+        for i, j in ((a, b), (b, c), (c, a)):
+            if i < j: edges.append((i, j))
+            else:     edges.append((j, i))
+    cnt = Counter(edges)
+    b_verts = np.unique(np.array([v for e,k in cnt.items() if k == 1 for v in e], dtype=int))
+    return b_verts
+
 def pick_even_start_points(
         triangles,
-        outer_seed_point,
-        pct=50,
-        target_spacing=None,   # ≈ desired Euclidean separation (if None we infer)
-        max_points=None        # hard cap; ignored if None
+        outer_seed_point,        # kept for API compat; no longer used for the cap
+        pct=50,                  # percentage of the inradius to keep (core size)
+        target_spacing=None,     # desired *geodesic* spacing on-surface
+        max_points=None
 ):
     """
-    Return an evenly spread subset of vertices lying on the 'top' (Dirichlet=1)
-    surface, all of which are within `pct` % of the *maximum* geodesic distance
-    (along that surface) from `outer_seed_point`.
-
-    Parameters
-    ----------
-    triangles : list[dict]
-        Output of `preprocess_triangles`, one dict per triangle.
-    outer_seed_point : (3,) array-like
-        3-D coordinate of the outer seed.
-    pct : float, default 50
-        Keep vertices whose Dijkstra distance ≤ pct/100 · max_distance.
-    target_spacing : float, optional
-        Desired minimum Euclidean spacing between returned points.
-        If None, we set it to 5 % of the bounding-box diagonal of the subset.
-    max_points : int, optional
-        Maximum number of points to return (useful as a quick upper bound).
-
-    Returns
-    -------
-    start_pts : (M, 3) ndarray
-        Coordinates of chosen start points, evenly spread over the admissible
-        portion of the top surface.
+    Reverse-cap selection: keep only vertices whose geodesic distance *to the boundary*
+    is >= (1 - pct/100) * inradius, then run geodesic FPS within that admissible core.
+    Returns an (M,3) array of start points on the Dirichlet=1 surface.
     """
-    # ------------------------------------------------------------------
-    # 1. Gather *top* vertices and build an index map  (unique → row id)
-    # ------------------------------------------------------------------
+
+    # 1) Collect top-surface vertices/faces (Dirichlet=1)
     top_verts = {}
     faces_top = []
     for tri in triangles:
@@ -288,73 +283,82 @@ def pick_even_start_points(
                 idxs.append(top_verts.setdefault(key, len(top_verts)))
             faces_top.append(idxs)
 
-    if len(top_verts) == 0:
-        raise ValueError("No Dirichlet-1 triangles found in input surface.")
+    if not top_verts:
+        raise ValueError("No Dirichlet=1 triangles found.")
 
     V = np.asarray(list(top_verts.keys()), dtype=np.float64)  # (N,3)
     F = np.asarray(faces_top,             dtype=np.int32)     # (M,3)
 
-    # ------------------------------------------------------------------
-    # 2. Build sparse edge graph (undirected) with edge-length weights
-    # ------------------------------------------------------------------
-    rows, cols, dists = [], [], []
+    # 2) Build undirected weighted edge graph (edge length weights)
+    rows, cols, wts = [], [], []
     for a, b, c in F:
         for i, j in ((a, b), (b, c), (c, a)):
-            rows.append(i); cols.append(j)
             d = np.linalg.norm(V[i] - V[j])
-            dists.append(d)
-            # add symmetric entry
-            rows.append(j); cols.append(i); dists.append(d)
+            rows.append(i); cols.append(j); wts.append(d)
+            rows.append(j); cols.append(i); wts.append(d)
+    G_full = coo_matrix((wts, (rows, cols)), shape=(len(V), len(V))).tocsr()
 
-    G = coo_matrix((dists, (rows, cols)), shape=(len(V), len(V)))
+    # 3) Reverse-cap: distance *from boundary*
+    boundary = _find_boundary_vertices(F)
+    if boundary.size == 0:
+        # Fallback: no boundary detected → behave like full set (or you could
+        # fall back to the old seed-cap if you prefer)
+        d_to_boundary = np.full(len(V), np.inf)
+        inradius = np.inf
+        admissible = np.arange(len(V), dtype=int)
+    else:
+        # Multi-source Dijkstra from all boundary vertices
+        D = dijkstra(G_full, directed=False, indices=boundary)   # (|B|, N)
+        d_to_boundary = np.min(D, axis=0)                        # nearest-boundary distance
+        finite = np.isfinite(d_to_boundary)
+        if not finite.any():
+            raise RuntimeError("No finite distance-to-boundary values.")
+        inradius = float(np.max(d_to_boundary[finite]))          # geodesic inradius
+        # Keep the inner core: >= (1 - pct)*inradius
+        thresh = (1.0 - (pct / 100.0)) * inradius
+        admissible = np.where(d_to_boundary >= thresh)[0]
+        if admissible.size == 0:
+            raise ValueError("Reverse-cap produced an empty admissible set. Consider increasing pct.")
 
-    # ------------------------------------------------------------------
-    # 3. Locate vertex closest to outer_seed_point, run Dijkstra
-    # ------------------------------------------------------------------
-    seed_idx = np.argmin(np.linalg.norm(V - outer_seed_point, axis=1))
-    geo_d   = dijkstra(G, directed=False, indices=seed_idx)
-    geo_d   = np.asarray(geo_d)           # (N,)
+    V_sub = V[admissible]
+    G_sub = G_full[admissible][:, admissible]  # induced subgraph for the core
 
-    finite = np.isfinite(geo_d)
-    geo_max = geo_d[finite].max()
-    thresh  = (pct / 100.0) * geo_max
-
-    admissible = np.where(geo_d <= thresh)[0]
-    V_sub      = V[admissible]
-
-    # ------------------------------------------------------------------
-    # 4. Poisson-like farthest-point sampling for even spread
-    # ------------------------------------------------------------------
-    if V_sub.shape[0] == 0:
-        raise ValueError("No vertices satisfy distance threshold.")
-
-    # Heuristic spacing if none supplied
+    # 4) Geodesic farthest-point sampling within the admissible core
+    # Auto spacing: ~5% of core diameter if not provided
     if target_spacing is None:
-        bb_diag = np.linalg.norm(V_sub.max(0) - V_sub.min(0))
-        target_spacing = 0.05 * bb_diag     # 5 % of bbox diagonal
+        # Pick a deterministic start (index 0 in the core), sweep to farthest, then sweep again
+        d0 = dijkstra(G_sub, directed=False, indices=0)
+        a0 = int(np.argmax(d0)) if np.any(np.isfinite(d0)) else 0
+        d_a0 = dijkstra(G_sub, directed=False, indices=a0)
+        approx_diam = float(np.nanmax(d_a0[np.isfinite(d_a0)]))
+        target_spacing = 0.05 * approx_diam if np.isfinite(approx_diam) and approx_diam > 0 else 0.0
 
-    chosen = [int(np.random.choice(admissible))]   # start from random admissible
-    chosen_coords = [V[chosen[0]]]
+    # Start deterministically at the core vertex with max distance-to-boundary (deepest core)
+    first_sub_idx = int(np.argmax(d_to_boundary[admissible]))
+    chosen_sub = [first_sub_idx]
+    chosen_coords = [V_sub[first_sub_idx]]
+
+    d_min = dijkstra(G_sub, directed=False, indices=first_sub_idx)
+    d_min = np.asarray(d_min)
 
     while True:
-        # Compute each admissible vertex's distance to nearest chosen point
-        dist_to_chosen = np.min(
-            np.linalg.norm(V_sub[:, None, :] - np.array(chosen_coords)[None, :, :],
-                           axis=2),
-            axis=1
-        )
-        # pick the candidate with the largest min-distance
-        next_idx = np.argmax(dist_to_chosen)
-        if dist_to_chosen[next_idx] < target_spacing:
-            break  # all remaining points too close → stop
+        next_sub_idx = int(np.argmax(d_min))
+        max_min_dist = float(d_min[next_sub_idx])
 
-        chosen.append(admissible[next_idx])
-        chosen_coords.append(V_sub[next_idx])
-
-        if max_points is not None and len(chosen) >= max_points:
+        if not np.isfinite(max_min_dist) or max_min_dist < target_spacing:
             break
 
+        chosen_sub.append(next_sub_idx)
+        chosen_coords.append(V_sub[next_sub_idx])
+
+        if max_points is not None and len(chosen_sub) >= max_points:
+            break
+
+        d_new = dijkstra(G_sub, directed=False, indices=next_sub_idx)
+        d_min = np.minimum(d_min, d_new)
+
     return np.asarray(chosen_coords, dtype=np.float64)
+
 
 @njit
 def distance(x, y):
@@ -827,39 +831,83 @@ def assign_unknown_indices(triangles):
             unknown_index+=1
     return unknown_index
 
+def triangle_areas(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    v0 = verts[faces[:, 0]]
+    v1 = verts[faces[:, 1]]
+    v2 = verts[faces[:, 2]]
+    return 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+
+def remove_degenerate_tris(verts: np.ndarray,
+                           faces: np.ndarray,
+                           eps: float = 1e-12,
+                           dedup_faces: bool = True):
+    """
+    Returns (new_verts, new_faces, kept_face_mask, idx_old2new)
+    - Drops faces with area <= eps or non-finite area
+    - Optionally deduplicates identical faces (ignoring winding)
+    - Reindexes faces to a compact vertex set
+    """
+    # 1) drop bad faces
+    areas = triangle_areas(verts, faces)
+    keep_face = np.isfinite(areas) & (areas > eps)
+    faces = faces[keep_face]
+    removed = int(np.count_nonzero(~keep_face))
+
+    # 2) (optional) drop duplicate faces
+    if dedup_faces and faces.size:
+        f_sorted = np.sort(faces, axis=1)
+        _, unique_idx = np.unique(f_sorted, axis=0, return_index=True)
+        unique_idx = np.sort(unique_idx)
+        removed_dups = faces.shape[0] - unique_idx.size
+        faces = faces[unique_idx]
+    else:
+        removed_dups = 0
+
+    # 3) reindex vertices
+    if faces.size:
+        used = np.unique(faces.ravel())
+        idx_old2new = -np.ones(verts.shape[0], dtype=np.int64)
+        idx_old2new[used] = np.arange(used.size)
+        new_verts = verts[used]
+        new_faces = idx_old2new[faces]
+    else:
+        # empty mesh fallback
+        used = np.array([], dtype=np.int64)
+        idx_old2new = -np.ones(verts.shape[0], dtype=np.int64)
+        new_verts = verts[:0]
+        new_faces = faces[:0]
+
+    return new_verts, new_faces, keep_face, idx_old2new, removed, removed_dups
+
+
+
 @njit(fastmath=True)
 def _compute_IJ_numba(x, v0, v1, v2, n, order=1):
     """
     Compute single-layer (I) & double-layer (J) triangle integrals
     ∫_T G(x,y) dS  and  ∫_T ∂G/∂n_y (x,y) dS
     using 1-, 3-, or 7-point barycentric quadrature.
-
-    Parameters
-    ----------
-    x     : (3,) float64  – field point
-    v0..v2: (3,) float64  – triangle vertices
-    n     : (3,) float64  – outward normal of the triangle
-    order : int {1,3,7}   – quadrature order
-
-    Returns
-    -------
-    I, J : float64
+    If any quadrature point y coincides with x (r1=0), the triangle is skipped.
     """
+    EPS = 1e-15
+
     # -- geometry --
     e1 = v1 - v0
     e2 = v2 - v0
-    cross = np.cross(e1, e2)
-    area  = 0.5 * math.sqrt(cross[0]**2 + cross[1]**2 + cross[2]**2)
+    cr = np.cross(e1, e2)
+    area = 0.5 * math.sqrt(cr[0]*cr[0] + cr[1]*cr[1] + cr[2]*cr[2])
+    if (not math.isfinite(area)) or (area <= EPS):
+        return 0.0, 0.0  # skip degenerate triangle
 
     # -- choose quadrature rule --
     if order == 1:                       # centroid rule
         w = np.array([1.0], dtype=np.float64)
-        l = np.array([[1/3, 1/3, 1/3]], dtype=np.float64)
+        l = np.array([[1.0/3.0, 1.0/3.0, 1.0/3.0]], dtype=np.float64)
     elif order == 3:                     # three points, equal weights
-        w = np.array([1/3, 1/3, 1/3], dtype=np.float64)
-        l = np.array([[1/2, 1/2, 0.0],
-                      [1/2, 0.0, 1/2],
-                      [0.0, 1/2, 1/2]], dtype=np.float64)
+        w = np.array([1.0/3.0, 1.0/3.0, 1.0/3.0], dtype=np.float64)
+        l = np.array([[0.5, 0.5, 0.0],
+                      [0.5, 0.0, 0.5],
+                      [0.0, 0.5, 0.5]], dtype=np.float64)
     else:                                # 7-point Dunavant
         w = _DUNAVANT_W
         l = _DUNAVANT_L
@@ -868,16 +916,24 @@ def _compute_IJ_numba(x, v0, v1, v2, n, order=1):
     I = 0.0
     J = 0.0
     for k in range(l.shape[0]):
-        l1, l2, l3 = l[k]
-        y = l1 * v0 + l2 * v1 + l3 * v2          # quadrature point
+        l1, l2, l3 = l[k, 0], l[k, 1], l[k, 2]
+        y = l1 * v0 + l2 * v1 + l3 * v2  # quadrature point
 
-        r  = x - y
-        r2 = r[0]*r[0] + r[1]*r[1] + r[2]*r[2]
-        r1 = math.sqrt(r2)
-        r3 = r2 * r1
+        r0 = x[0] - y[0]
+        r1_ = x[1] - y[1]
+        r2_ = x[2] - y[2]
+        r2sq = r0*r0 + r1_*r1_ + r2_*r2_
 
+        # If r1 == 0 (i.e., r2sq == 0), skip the entire triangle
+        if r2sq <= EPS*EPS:
+            return 0.0, 0.0
+
+        r1 = math.sqrt(r2sq)
+        r3 = r2sq * r1
+
+        # kernels
         G    = INV4PI / r1
-        dGdn = INV4PI * (n[0]*r[0] + n[1]*r[1] + n[2]*r[2]) / r3
+        dGdn = INV4PI * (n[0]*r0 + n[1]*r1_ + n[2]*r2_) / r3
 
         I += w[k] * G
         J += w[k] * dGdn
@@ -885,6 +941,7 @@ def _compute_IJ_numba(x, v0, v1, v2, n, order=1):
     I *= area
     J *= area
     return I, J
+
 
 def compute_Iij_Jij(x_i, tri_j, i, j, *, order=1):
     """
@@ -929,7 +986,7 @@ def _row_task(i: int):
         row_J[j] = J_ij
 
     return i, row_I, row_J
-
+'''
 def assemble_system(triangles, *, parallel=False, max_workers=None):
     n_unknowns = assign_unknown_indices(triangles)
     bc_code, bc_value, unk_index, centroids = _triangles_to_arrays(triangles)
@@ -991,6 +1048,95 @@ def assemble_system(triangles, *, parallel=False, max_workers=None):
                     A[i, unk_index[j]] -= I_ij
 
     return A, b
+'''
+def compute_Sij(x_i, tri_j, i, j):
+    I_ij, J_ij = compute_Iij_Jij(x_i, tri_j, i, j)
+    return J_ij
+
+def compute_Kpij(x_i, n_i, tri_j, i, j):
+    I_ij, J_ij = compute_Iij_Jij(x_i, tri_j, i, j)
+    return I_ij
+
+def assemble_system(triangles, *, parallel=False, max_workers=None):
+    """
+    Build the mixed-BC BEM system with a single-layer unknown q on *every* triangle.
+
+    Dirichlet row i:    (S q)_i = phi_bc[i]
+    Neumann row i:      (-0.5*I + K' q)_i = g_bc[i]     # interior limit; flip sign if your normals differ
+
+    Notes:
+      * Unknowns are now one-per-triangle (n_unknowns = n_tris).
+      * We rely on your existing _row_task to return (i, row_I, row_J) where:
+          row_I[j] = K'_{ij}  (principal-value; no jump inside!)
+          row_J[j] = S_{ij}
+      * compute_Iij_Jij / _row_task MUST handle singular / near-singular quadrature appropriately.
+    """
+    import numpy as np
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+
+    # Pull arrays exactly as you already do
+    # (we ignore unk_index here — q lives on all triangles)
+    n_tris = len(triangles)
+    bc_code, bc_value, unk_index, centroids = _triangles_to_arrays(triangles)
+
+    # One unknown per triangle
+    A = np.zeros((n_tris, n_tris), dtype=float)
+    b = np.zeros(n_tris, dtype=float)
+
+    # Interior limit with outward normals -> -0.5 jump.
+    # If your K' or normals use opposite sign, change to +0.5.
+    HALF_JUMP = -0.5
+
+    if parallel:
+        if max_workers is None:
+            max_workers = mp.cpu_count() or 1
+        chunksize = max(1, n_tris // (8 * max_workers))
+
+        # Keep your existing worker wiring; we only change how we *consume* its outputs.
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_init_worker,
+            initargs=(triangles, bc_code, bc_value, unk_index, centroids),
+            mp_context=_CTX,
+        ) as pool:
+
+            for i, row_I, row_J in pool.map(_row_task, range(n_tris), chunksize=chunksize):
+                if bc_code[i] == 0:        # Dirichlet row: S
+                    A[i, :] = row_J
+                    b[i]    = bc_value[i]
+                elif bc_code[i] == 1:      # Neumann row: (-0.5*I + K')
+                    A[i, :] = row_I
+                    A[i, i] += HALF_JUMP
+                    b[i]    = bc_value[i]  # 0 for your side wall
+                else:
+                    raise ValueError(f"Unknown bc_code at row {i}: {bc_code[i]}")
+
+    else:
+        # Serial path: compute rows directly from (I_ij, J_ij)
+        for i in range(n_tris):
+            x_i = centroids[i]
+
+            # Build row_I (K') and row_J (S)
+            row_I = np.empty(n_tris, dtype=float)
+            row_J = np.empty(n_tris, dtype=float)
+            for j in range(n_tris):
+                I_ij, J_ij = compute_Iij_Jij(x_i, triangles[j], i, j)
+                row_I[j] = I_ij
+                row_J[j] = J_ij
+
+            if bc_code[i] == 0:            # Dirichlet row: S
+                A[i, :] = row_J
+                b[i]    = bc_value[i]
+            elif bc_code[i] == 1:          # Neumann row: (-0.5*I + K')
+                A[i, :] = row_I
+                A[i, i] += HALF_JUMP
+                b[i]    = bc_value[i]
+            else:
+                raise ValueError(f"Unknown bc_code at row {i}: {bc_code[i]}")
+
+    return A, b
+
 
 def solve_system(A, b):
     return np.linalg.solve(A, b)
@@ -1435,7 +1581,7 @@ def compute_meyer_normal_jit(pt,
     if np.dot(n_sum, norms_arr[base_idx]) < 0.0:
         n_sum *= -1.0
 
-    return n_sum
+    return -n_sum
 
 # --------------------- scalar adaptive ----------------------------------------
 @njit
@@ -1858,7 +2004,7 @@ def trace_single_path(
 
     # ----------------------------------------------------- 1) n-ring
     avg_normal = compute_meyer_normal_jit(
-        x_current, verts_arr, norms_arr, areas_arr, cents_arr, radius=-1.0, eps=1e-12, debug=False)
+        x_current, verts_arr, norms_arr, areas_arr, cents_arr, radius=-1.0, eps=1e-12, debug=True)
     if direction == 'up':
         avg_normal = -avg_normal
 
@@ -2050,115 +2196,85 @@ def path_trace_simple(
     alpha_initial=0.1,
     first_step=0.05,
     *,
-    debug=False,):
-    # 1) ------------------------------------------------ dbg helper
+    debug=True,
+    angle_max_deg=35.0,
+):
     def dbg(msg):
         if debug:
-            print(msg)
+            print(msg, flush=True)
 
-    # 2) -------------------------------------------- forced full‑α step
-    def forced_step(old_pt, g_prev, α_full):
-        step_dir  = (-g_prev if direction == 'down' else g_prev)
-        step_dir /= np.linalg.norm(step_dir)
-        return old_pt + α_full * step_dir
+    def step_dir_from_grad(g):
+        # unify sign: 'down' steps along -∇φ, 'up' along +∇φ
+        d = (-g if direction == 'down' else g)
+        n = np.linalg.norm(d)
+        return d / max(n, 1e-12)
 
-    # 3) ------------------------------- mesh → contiguous numeric arrays
+    # --- mesh → arrays
     verts_arr, norms_arr, areas_arr, cents_arr, q_arr, phi_arr = \
         triangles_to_numeric_full(triangles)
     faces = np.arange(verts_arr.size // 3).reshape(-1, 3)
 
-    # 4) --------------------------- bookkeeping / initial state
+    # --- state
     path_points  = [start_pt.copy()]
     total_length = 0.0
     x_current    = start_pt.copy()
-    alpha        = alpha_initial
-    prev_grad    = None
+    prev_step_dir = None
 
-    # 5) ----------------------------- tiny seed step off the surface
+    # --- seed step (step 0) along average normal (NO pre-flip)
     avg_normal = compute_meyer_normal_jit(
         x_current, verts_arr, norms_arr, areas_arr, cents_arr,
         radius=-1.0, eps=1e-12, debug=False)
 
-    if direction == 'up':
-        avg_normal = -avg_normal
-
-    if avg_normal is not None:
-        seed_vec = first_step * avg_normal
-        x_current = x_current - seed_vec
-        total_length += np.linalg.norm(seed_vec)
+    if avg_normal is not None and np.linalg.norm(avg_normal) > 0:
+        seed_dir    = avg_normal / np.linalg.norm(avg_normal)
+        x_current = x_current + first_step * seed_dir
+        total_length += first_step
         path_points.append(x_current.copy())
-        dbg(f"[SEED] moved {np.linalg.norm(seed_vec):.5f} along avg normal")
+        prev_step_dir = seed_dir.copy()
+        dbg(f"[SEED] moved {first_step:.5f}; seed_dir={seed_dir}")
+    else:
+        dbg("[SEED] no normal; skipping seed move")
 
-    # 6) ------------------------------ main iteration loop
-    GRAD_NORM_MAX = 1.0
+    # --- main loop
     for it in range(1, max_iter + 1):
-        # compute ∇φ (needed for steps 8, 10, 12)
-        grad_val  = evaluate_gradient_numba(
-            x_current, verts_arr, norms_arr, q_arr, phi_arr)
-        grad_norm = np.linalg.norm(grad_val)
+        g = evaluate_gradient_numba(x_current, verts_arr, norms_arr, q_arr, phi_arr)
+        cand_dir = step_dir_from_grad(g)  # candidate step direction (unit)
 
-        # 8) -------- sanity‑check angle between successive gradients
+        # angle guard (compare *step* directions, not raw gradients)
         angle_flip = False
-        if prev_grad is not None and grad_norm > 0.0:
-            cosθ = np.clip(
-                np.dot(grad_val, prev_grad) /
-                (grad_norm * np.linalg.norm(prev_grad)), -1.0, 1.0)
-            if np.degrees(np.arccos(cosθ)) > 35.0:
+        if prev_step_dir is not None:
+            a = float(np.clip(np.dot(cand_dir, prev_step_dir), -1.0, 1.0))
+            ang = float(np.degrees(np.arccos(a)))
+            if ang > angle_max_deg:
                 angle_flip = True
-                dbg(f"[{it:03}] ∠flip too high ({np.degrees(np.arccos(cosθ))}) → use prev ∇φ")
+                dbg(f"[{it:03}] ∠flip {ang:.2f}° > {angle_max_deg}° → reuse prev_step_dir")
 
-        # 10.1) ----- flag huge gradient magnitude drift
-        huge_grad = abs(grad_norm - 1.0) > GRAD_NORM_MAX
-
-        # 10.3) ----- decide whether to reuse previous gradient
-        use_prev = (huge_grad or angle_flip) and (prev_grad is not None)
-        grad_use = prev_grad if use_prev else grad_val
+        used_dir = prev_step_dir if (angle_flip and prev_step_dir is not None) else cand_dir
 
         old_pt = x_current.copy()
+        new_pt = old_pt + alpha_initial * used_dir
 
-        # 11) -------- forced step branch when trusting prev ∇φ
-        if use_prev:
-            new_pt = forced_step(old_pt, prev_grad, alpha_initial)
-            X_int  = find_exit_intersection(old_pt, new_pt, triangles)
-
-            if X_int is not None:                          # exited mesh
-                seg = np.linalg.norm(X_int - old_pt)
+        X_int = find_exit_intersection(old_pt, new_pt, triangles)  # ensure tmin ε in this func
+        if X_int is not None:
+            seg = np.linalg.norm(X_int - old_pt)
+            if seg <= 1e-8:
+                dbg(f"[{it:03}] EXIT at start (ε) — stopping")
+            else:
                 total_length += seg
                 path_points.append(X_int.copy())
-                dbg(f"[{it:03}] EXIT after forced step (len={seg:.5f})")
-                break
-            else:                                          # still inside
-                seg = np.linalg.norm(new_pt - old_pt)
-                total_length += seg
-                path_points.append(new_pt.copy())
-                x_current = new_pt
-                continue                                   # next iter
-
-        # 12) -------- ordinary step along current trusted gradient
-        step_dir  = (-grad_use if direction == 'down' else grad_use)
-        step_dir /= np.linalg.norm(step_dir)
-        new_pt    = old_pt + alpha * step_dir
-
-        # 15) -------- intersection test for this step
-        X_int = find_exit_intersection(old_pt, new_pt, triangles)
-        if X_int is not None:                              # crossed out
-            seg = np.linalg.norm(X_int - old_pt)
-            total_length += seg
-            path_points.append(X_int.copy())
-            dbg(f"[{it:03}] EXIT (len={seg:.5f})")
+                dbg(f"[{it:03}] EXIT (len={seg:.5f})")
             break
-        else:                                              # accepted step
-            seg = np.linalg.norm(new_pt - old_pt)
-            total_length += seg
-            path_points.append(new_pt.copy())
-            x_current  = new_pt
-            prev_grad  = grad_use.copy()
-            # α stays constant; no back‑tracking logic in this simple version
 
-    # 16) ------------ loop ends naturally if max_iter reached
+        # accept step
+        seg = np.linalg.norm(new_pt - old_pt)
+        total_length += seg
+        path_points.append(new_pt.copy())
+        x_current = new_pt
+        prev_step_dir = used_dir.copy()
+        dbg(f"[{it:03}] step ok len={seg:.5f}, total={total_length:.5f}")
+
     dbg(f"[DONE] steps={len(path_points)-1}, total_len={total_length:.5f}")
 
-    # ------------ inside path_trace_simple --------------
     if direction == 'down':
         def nearest_vertex_idx(pt, verts):
             flat = verts.reshape(-1, 3)
@@ -2166,14 +2282,9 @@ def path_trace_simple(
 
         v0_idx = nearest_vertex_idx(start_pt, verts_arr)
         vn_idx = nearest_vertex_idx(path_points[-1], verts_arr)
-
         K0, H0 = average_curvature_one_ring(v0_idx, verts_arr, faces, areas_arr)
         Kn, Hn = average_curvature_one_ring(vn_idx, verts_arr, faces, areas_arr)
+        _log_thick_curv_pair(total_length, (K0, H0), (Kn, Hn))
 
-        # ----- log thickness + averaged curvature metrics
-        _log_thick_curv_pair(total_length,
-                            (K0, H0),     # outer surface
-                            (Kn, Hn))     # inner surface
-
-    # 19) ------------ return polyline & length
     return path_points, total_length
+
