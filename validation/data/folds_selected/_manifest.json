@@ -1,0 +1,214 @@
+{
+  "destination": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected",
+  "pad": 3,
+  "copies": [
+    {
+      "new_idx": 0,
+      "new_tag": "000",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds",
+      "tag": "000",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\zipped_patch_000.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_000.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\outer_seed_000.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_000.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 1,
+      "new_tag": "001",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds",
+      "tag": "003",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\zipped_patch_003.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_001.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\outer_seed_003.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_001.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 2,
+      "new_tag": "002",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds",
+      "tag": "004",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\zipped_patch_004.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_002.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\outer_seed_004.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_002.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 3,
+      "new_tag": "003",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds",
+      "tag": "005",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\zipped_patch_005.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_003.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\outer_seed_005.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_003.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 4,
+      "new_tag": "004",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds",
+      "tag": "006",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\zipped_patch_006.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_004.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\outer_seed_006.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_004.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 5,
+      "new_tag": "005",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds",
+      "tag": "009",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\zipped_patch_009.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_005.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds\\outer_seed_009.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_005.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 6,
+      "new_tag": "006",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "000",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_000.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_006.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_000.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_006.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 7,
+      "new_tag": "007",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "003",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_003.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_007.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_003.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_007.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 8,
+      "new_tag": "008",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "004",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_004.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_008.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_004.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_008.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 9,
+      "new_tag": "009",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "005",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_005.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_009.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_005.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_009.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 10,
+      "new_tag": "010",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "006",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_006.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_010.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_006.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_010.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 11,
+      "new_tag": "011",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "007",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_007.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_011.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_007.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_011.npy"
+        }
+      }
+    },
+    {
+      "new_idx": 12,
+      "new_tag": "012",
+      "src": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2",
+      "tag": "008",
+      "files": {
+        "pickle": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\zipped_patch_008.pkl",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\zipped_patch_012.pkl"
+        },
+        "seed": {
+          "from": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds2\\outer_seed_008.npy",
+          "to": "C:\\Users\\uqasnell\\Documents\\GitHub\\laplace_thickness\\validation\\data\\folds_selected\\outer_seed_012.npy"
+        }
+      }
+    }
+  ]
+}

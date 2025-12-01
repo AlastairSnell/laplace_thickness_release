@@ -265,7 +265,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--radius", type=float, default=15.0, help="Disc radius [mm]")
-    parser.add_argument("--resolution", type=int, default=100, help="Number of rim vertices")
+    parser.add_argument("--resolution", type=int, default=60, help="Number of rim vertices")
     parser.add_argument("--edge-len", type=float, default=None, help="Approx. interior edge length [mm] (defaults to boundary chord length)")
     parser.add_argument(
         "--thicknesses", type=float, nargs="+", default=[0.25, 0.5, 1, 2, 3, 4],

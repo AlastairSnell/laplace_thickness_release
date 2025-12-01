@@ -31,15 +31,15 @@ CRITICAL_POINT_PATH = None   # e.g., "latest_clicked_coordinate.npy" (voxel coor
 RNG_SEED         = None
 
 # --- FreeSurfer subject surfaces (input) -------------------------------------
-FS_SURF_DIR = Path(r"\\wsl.localhost\Ubuntu\home\uqasnell\freesurfer_subjects\HCP103818_fs\surf")
-LH_PIAL  = "lh.pial.T2"
+FS_SURF_DIR = Path(r"\\wsl.localhost\Ubuntu\home\uqasnell\freesurfer_subjects\BG_001_fs\surf2")
+LH_PIAL  = "lh.pial"
 LH_WHITE = "lh.white"
-RH_PIAL  = "rh.pial.T2"
+RH_PIAL  = "rh.pial"
 RH_WHITE = "rh.white"
 
 # --- Output (Windows path) ---------------------------------------------------
-OUT_DIR   = Path(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\folds3")
-N_PATCHES = 50
+OUT_DIR   = Path(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\folds")
+N_PATCHES = 10
 
 # Side remeshing/orientation
 SIDE_REMESH_ITERS   = 3          # pymeshlab explicit isotropic remesh iters (if available)
@@ -460,6 +460,28 @@ def enforce_same_ccw(A: np.ndarray, B: np.ndarray) -> tuple[np.ndarray, np.ndarr
         B = B[::-1].copy()
     return A, B
 
+def _bbox_diag(V: np.ndarray) -> float:
+    mn = V.min(axis=0); mx = V.max(axis=0)
+    return float(np.linalg.norm(mx - mn))
+
+def _ms_targetlen(value_abs: float, V_ref_for_bbox: np.ndarray):
+    """
+    Build a PyMeshLab 'targetlen' compatible with your installed wheel.
+    Tries AbsoluteValue (old), PureValue/Value (newer), else Percentage of bbox diag.
+    """
+    import pymeshlab as ml
+    # Newer/older absolute-value classes
+    for name in ("AbsoluteValue", "PureValue", "Value"):
+        if hasattr(ml, name):
+            return getattr(ml, name)(float(value_abs))
+    # Fallback: percentage of bbox diagonal
+    if hasattr(ml, "Percentage") or hasattr(ml, "PercentageValue"):
+        diag = _bbox_diag(V_ref_for_bbox)
+        pct = 100.0 * (value_abs / max(diag, 1e-9))
+        cls = getattr(ml, "PercentageValue", None) or getattr(ml, "Percentage")
+        return cls(float(pct))
+    raise RuntimeError("No suitable pymeshlab targetlen wrapper found.")
+
 def build_side_strip(pial_loop: np.ndarray, white_loop: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     n = len(pial_loop)
     pts = np.vstack([pial_loop, white_loop])
@@ -649,7 +671,7 @@ def build_one_patch(surfaces, adjacency, RADIUS_MM, SUBDIV_ITERS, rng) -> dict |
         rays=OUTWARD_RAYS, parity_sampling=PARITY_SAMPLING,
         use_weld=False, weld_tol=1e-7,
     )
-
+    
     tris = []
     tris += faces_to_tri_dicts(outer_v, pfaces_o, 'dirichlet', 1.0)
     tris += faces_to_tri_dicts(inner_v, wfaces_o, 'dirichlet', 0.0)
@@ -686,7 +708,7 @@ def main() -> None:
     adjacency = {k: build_adjacency(*surf) for k, surf in surfaces.items()}
 
     rng = np.random.default_rng(RNG_SEED)
-    produced = 0; attempts = 0; MAX_ATTEMPTS = N_PATCHES * 20
+    produced = 0; attempts = 0; MAX_ATTEMPTS = N_PATCHES * 1000
 
     while produced < N_PATCHES and attempts < MAX_ATTEMPTS:
         attempts += 1

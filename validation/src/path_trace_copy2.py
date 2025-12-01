@@ -21,10 +21,10 @@ except Exception:  # Numba not available; no-op decorator
 # ----------------------------- Configuration -----------------------------
 @dataclass(slots=True)
 class BEMConfig:
-    quad_order: Literal[1, 3, 7] = 7
-    TAU_NEAR: float = 0.3          # near-singularity threshold: dist/h < TAU_NEAR
-    TOL_NEAR: float = 1e-10        # adaptive subdivision tolerance (absolute, integrals)
-    MAX_SUBDIV: int = 7            # max recursion depth for near/self panels
+    quad_order: Literal[1, 3, 7] = 3
+    TAU_NEAR: float = 0.2          # near-singularity threshold: dist/h < TAU_NEAR
+    TOL_NEAR: float = 1e-6        # adaptive subdivision tolerance (absolute, integrals)
+    MAX_SUBDIV: int = 4            # max recursion depth for near/self panels
     FOURPI: float = 4.0 * math.pi  # constant
     USE_KP_NEAR_REFINEMENT: bool = True  # refine near for K' as well (recommended)
 
@@ -482,6 +482,151 @@ def find_exit_intersection(p0, p1, all_triangles):
             best_point= xint
     return best_point
 
+def closest_centroid_idx(pt, cents_arr):
+    """
+    Return the index of the triangle whose centroid is nearest to `pt`.
+
+    Parameters
+    ----------
+    pt        : (3,) array_like
+        Query point (x, y, z).
+    cents_arr : (N, 3) float64
+        Centroids of all N triangles.
+
+    Returns
+    -------
+    idx : int
+        Index of the closest centroid, or -1 if cents_arr is empty.
+    """
+    cents_arr = np.asarray(cents_arr, dtype=float)
+    if cents_arr.size == 0:
+        return -1
+
+    pt        = np.asarray(pt, dtype=float)
+    # Squared Euclidean distances, then argmin
+    d2        = np.sum((cents_arr - pt)**2, axis=1)
+    return int(np.argmin(d2))
+
+def compute_meyer_normal_jit(pt,
+                             verts_arr,
+                             norms_arr,
+                             areas_arr,
+                             cents_arr,
+                             radius=-1.0,
+                             eps=1e-12,
+                             debug=False):
+    """
+    Meyer-style area-weighted pseudo-normal at arbitrary point `pt`.
+
+    radius < 0  → base face + edge-sharing neighbours (“one-ring”)
+    radius >= 0 → faces whose centroids lie within `radius` of `pt`
+    """
+    n_faces = cents_arr.shape[0]
+
+    # ----------------------------------------------------------------------
+    # 1) Find the face whose centroid is closest to `pt`
+    # ----------------------------------------------------------------------
+    base_idx = closest_centroid_idx(pt, cents_arr)
+    if base_idx == -1:
+        return norms_arr[0]          # degenerate fallback
+
+    # ----------------------------------------------------------------------
+    # 2) Build neighbour mask
+    # ----------------------------------------------------------------------
+    neigh_mask = np.zeros(n_faces, np.uint8)
+    neigh_mask[base_idx] = 1
+
+    if radius < 0.0:                 # literal one-ring
+        v0, v1, v2 = verts_arr[base_idx]
+        for j in range(n_faces):
+            if j == base_idx:
+                continue
+            shared = 0
+            for vv in verts_arr[j]:
+                if (np.all(vv == v0) or np.all(vv == v1) or np.all(vv == v2)):
+                    shared += 1
+            if shared >= 2:          # shares an edge
+                neigh_mask[j] = 1
+    else:                            # centroid-radius set
+        for j in range(n_faces):
+            if np.linalg.norm(cents_arr[j] - pt) < radius:
+                neigh_mask[j] = 1
+
+    # ----------------------------------------------------------------------
+    # 3) Area-weighted face-normal sum  (Meyer 2003, Eq. (11))
+    # ----------------------------------------------------------------------
+    n_sum = np.zeros(3, np.float64)
+
+    for j in range(n_faces):
+        if neigh_mask[j] == 0:
+            continue
+
+        # --- Weight choice -------------------------------------------------
+        # Meyer pseudo-normal:           w = area_f
+        # Angle-weighted pseudo-normal:  w = angle at pt in face f
+        w = areas_arr[j]
+
+        # Uncomment below for angle weighting (pt must coincide with a vertex)
+        # if False:
+        #     verts = verts_arr[j]
+        #     # find which vertex indexes match pt
+        #     vidx = -1
+        #     for k in range(3):
+        #         if np.all(np.abs(verts[k] - pt) < eps):
+        #             vidx = k
+        #             break
+        #     if vidx >= 0:
+        #         a = verts[(vidx + 1) % 3] - verts[vidx]
+        #         b = verts[(vidx + 2) % 3] - verts[vidx]
+        #         cos_ang = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + eps)
+        #         w = np.arccos(np.clip(cos_ang, -1.0, 1.0))
+
+        if debug:
+            print(f"[dbg] face {j:4d}: area={areas_arr[j]:.4e}, w={w:.4e}, n={norms_arr[j]}")
+
+        n_sum += norms_arr[j] * w
+
+    # ----------------------------------------------------------------------
+    # 4) Normalise and orient consistently with base face
+    # ----------------------------------------------------------------------
+    n_len = np.linalg.norm(n_sum)
+    if n_len < eps:
+        return norms_arr[base_idx]   # fallback if something went wrong
+
+    n_sum /= n_len
+    if np.dot(n_sum, norms_arr[base_idx]) < 0.0:
+        n_sum *= -1.0
+
+    return -n_sum
+
+def triangles_to_numeric_full(triangles):
+    """
+    Convert list-of-dict ‘triangles’ → contiguous numeric arrays
+    (geometry only; no BC/solution data).
+
+    Returns
+    -------
+    verts      : (n, 3, 3) float64 – triangle vertices
+    norms      : (n, 3)    float64 – unit normals
+    areas      : (n,)      float64 – triangle areas
+    centroids  : (n, 3)    float64 – pre-computed centroids
+    """
+    n = len(triangles)
+
+    verts     = np.empty((n, 3, 3), dtype=np.float64)
+    norms     = np.empty((n, 3),     dtype=np.float64)
+    areas     = np.empty(n,          dtype=np.float64)
+    centroids = np.empty((n, 3),     dtype=np.float64)
+
+    for i, tri in enumerate(triangles):
+        verts[i]     = tri['vertices']
+        norms[i]     = tri['normal']
+        areas[i]     = tri['area']
+        centroids[i] = tri['centroid']
+
+    return verts, norms, areas, centroids
+
+
 def path_trace_simple_bem(
     start_pt,
     triangles,
@@ -489,11 +634,11 @@ def path_trace_simple_bem(
     cfg,
     direction='down',
     max_iter=200,
-    alpha_initial=0.10,
+    alpha_initial=0.05,
     first_step=0.05,
     *,
-    debug=True,
-    angle_max_deg=35.0,
+    debug=False,
+    angle_max_deg=30.0,
 ):
     """
     Steepest-descent (or ascent) path traced in the BEM-computed field.
@@ -511,12 +656,6 @@ def path_trace_simple_bem(
         n = np.linalg.norm(d)
         return d / max(n, 1e-16)
 
-    # --- helpers specific to this cylinder (optional but fast) ---
-    # If you want generality, replace by mesh-based distance util.
-    def dist_to_boundary(pt, R=15.0, H=4.0):
-        r = np.hypot(pt[0], pt[1])
-        return min(R - r, pt[2], H - pt[2])
-
     # --- state ---
     path_points  = [start_pt.copy()]
     total_length = 0.0
@@ -525,45 +664,64 @@ def path_trace_simple_bem(
 
     # --- seed: push safely into the interior and align with -∇φ (for 'down') ---
     # 1) get a provisional surface normal (your routine, or infer per-cap)
-    #    If you don't have normals here, seed straight along -∇φ once.
-    # evaluate gradient at start (safe: interior eval; if exactly on surface, offset by eps z)
-    eps = 1e-6
-    g0 = evaluate_gradient(np.asarray([x_current + np.array([0,0,-eps])]), triangles, q, cfg)[0]
-    seed_dir = step_dir_from_grad(g0)  # points into the interior for 'down'
+    # --- seed step (step 0) along average normal (NO pre-flip)
 
-    # scale seed by local gap to boundary to clear the jump layer
-    fs = max(first_step, 0.15 * max(dist_to_boundary(x_current), 1e-3))
-    x_current = x_current + fs * seed_dir
-    total_length += fs
-    path_points.append(x_current.copy())
-    prev_step_dir = seed_dir.copy()
-    dbg(f"[SEED] moved {fs:.5f}; seed_dir={seed_dir}")
+    verts_arr, norms_arr, areas_arr, cents_arr = \
+        triangles_to_numeric_full(triangles)
+
+    avg_normal = compute_meyer_normal_jit(
+        x_current, verts_arr, norms_arr, areas_arr, cents_arr,
+        radius=-1.0, eps=1e-12, debug=False)
+
+    if avg_normal is not None and np.linalg.norm(avg_normal) > 0:
+        seed_dir    = avg_normal / np.linalg.norm(avg_normal)
+        x_current = x_current + first_step * seed_dir
+        total_length += first_step
+        path_points.append(x_current.copy())
+        prev_step_dir = seed_dir.copy()
+        dbg(f"[SEED] moved {first_step:.5f}; seed_dir={seed_dir}")
+    else:
+        prev_step_dir = None
+        dbg("[SEED] no normal; skipping seed move")
 
     # --- main loop ---
     for it in range(1, max_iter + 1):
+        # 1) Gradient at current point
         g = evaluate_gradient(np.asarray([x_current]), triangles, q, cfg)[0]
+
+        # 2) Check gradient validity
         if not np.all(np.isfinite(g)) or np.linalg.norm(g) < 1e-12:
             dbg(f"[{it:03}] gradient too small or invalid → stop")
             break
 
-        cand_dir = step_dir_from_grad(g)  # unit
+        # 3) Candidate direction from gradient (unit)
+        cand_dir = step_dir_from_grad(g)
 
-        # angle guard (compare step directions)
+        # 4) Angle guard: decide which direction to use
         used_dir = cand_dir
         if prev_step_dir is not None:
+            # cosine of angle between candidate and previous USED direction
             a = float(np.clip(np.dot(cand_dir, prev_step_dir), -1.0, 1.0))
             ang = float(np.degrees(np.arccos(a)))
+
             if ang > angle_max_deg:
+                # If flip is too large, ignore gradient direction
+                # and reuse the *previous USED* direction
                 used_dir = prev_step_dir
-                dbg(f"[{it:03}] ∠flip {ang:.2f}° > {angle_max_deg}° → reuse prev_step_dir")
+                dbg(
+                    f"[{it:03}] ∠flip {ang:.2f}° > {angle_max_deg}° "
+                    f"→ reuse prev_step_dir"
+                )
+            else:
+                dbg(
+                    f"[{it:03}] step good"
+                )
 
-        # pick a safe step length (no backtracking)
-        alpha = min(alpha_initial, 0.5 * max(dist_to_boundary(x_current), 1e-3))
-
+        # 5) Propose step with FIXED alpha
         old_pt = x_current.copy()
-        new_pt = old_pt + alpha * used_dir
+        new_pt = old_pt + alpha_initial * used_dir  # alpha is constant
 
-        # exit detection: intersect with boundary (e.g., bottom cap)
+        # 6) Exit detection: intersect with boundary (e.g., bottom cap)
         X_int = find_exit_intersection(old_pt, new_pt, triangles)
         if X_int is not None:
             seg = np.linalg.norm(X_int - old_pt)
@@ -575,13 +733,14 @@ def path_trace_simple_bem(
                 dbg(f"[{it:03}] EXIT at start (ε) — stopping")
             break
 
-        # accept step
+        # 7) Accept full step
         seg = np.linalg.norm(new_pt - old_pt)
         total_length += seg
         path_points.append(new_pt.copy())
         x_current = new_pt
+
+        # Store the direction we ACTUALLY used this step
         prev_step_dir = used_dir.copy()
-        dbg(f"[{it:03}] step ok len={seg:.5f}, total={total_length:.5f}")
 
     dbg(f"[DONE] steps={len(path_points)-1}, total_len={total_length:.5f}")
     return path_points, total_length

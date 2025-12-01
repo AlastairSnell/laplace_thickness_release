@@ -68,8 +68,8 @@ def main():
     print("Loading surfaces.")
     #outer_seed = np.load(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\analytical\hemispheres\5mm_1_os.npy")
     #triangles = load_surfaces(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\analytical\hemispheres\5mm_1.pkl")
-    outer_seed = np.load(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\analytical\disks\10mm_4_os.npy")
-    triangles = load_surfaces(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\analytical\disks\10mm_4.pkl")
+    outer_seed = np.load(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\phantoms_final\1x10_09_os.npy")
+    triangles = load_surfaces(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\perturbed\folds_selected\zipped_patch_001_jitter_0p400.pkl")
     preprocess_triangles(triangles)
 
     print("Assembling system.")
@@ -90,7 +90,7 @@ def main():
     start_pts_pool = pick_even_start_points(
         triangles,
         outer_seed_point=outer_seed,
-        pct=90,
+        pct=50,
         target_spacing=5,
         max_points=None
     )

@@ -101,6 +101,7 @@ def geodesic_idw(
 
     return out
 
+
 def main():
     print("Loading surfaces...")
     outer_seed = np.load("outer_seed_point.npy")

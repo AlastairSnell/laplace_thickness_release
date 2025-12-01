@@ -8,7 +8,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.widgets import CheckButtons, Button
 
 # --------- CONFIG ---------
-PHANTOMS_DIR = Path(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\analytical\hemispheres")
+PHANTOMS_DIR = Path(r"C:\Users\uqasnell\Documents\GitHub\laplace_thickness\validation\data\big_folds")
 ALPHA = 0.85
 EDGE_W = 0.15
 # --------------------------

@@ -212,14 +212,31 @@ def _faces_to_tri_dicts(points: np.ndarray, faces: np.ndarray, bc_type: str, bc_
 def _fmt(x: float) -> str:
     return f"{x:g}"
 
-def generate_one(radius: float, thickness: float, theta_res: int, phi_res: int,
-                 out_dir: Path) -> None:
+def generate_one(radius: float,
+                 thickness: float,
+                 theta_res: int,
+                 phi_res: int,
+                 out_dir: Path,
+                 inner_shift: float = 0.0,
+                 inner_shift_axis: str = "z") -> None:
     """Generate one zipped *upper* hemisphere sample and write .pkl + outer-seed .npy."""
+
     # Build hemispheres (upper only)
     white_mesh = make_hemisphere(radius, theta_res, phi_res)
     pial_mesh  = make_hemisphere(radius + thickness, theta_res, phi_res)
 
-    # Extract geometry
+    # --- NEW: optionally translate the inner hemisphere as a rigid body ---
+    # Shift along chosen axis by inner_shift mm (morphology preserved).
+    axis_to_idx = {'x': 0, 'y': 1, 'z': 2}
+    shift_vec = np.zeros(3, dtype=float)
+
+    if inner_shift != 0.0:
+        ax_idx = axis_to_idx[inner_shift_axis]
+        shift_vec[ax_idx] = inner_shift
+        # Apply rigid translation to all inner (white) vertices
+        white_mesh.points += shift_vec
+
+    # Extract geometry (note: white_mesh may now be shifted, pial_mesh remains concentric)
     wpoints, wfaces = _pv_faces_to_tris(white_mesh)
     ppoints, pfaces = _pv_faces_to_tris(pial_mesh)
 
@@ -230,7 +247,7 @@ def generate_one(radius: float, thickness: float, theta_res: int, phi_res: int,
     # Side band bridging the equators (use the actual coordinates of each loop)
     side_points, side_faces = _robust_match_loops(wpoints[white_loop], ppoints[pial_loop])
 
-    # ---- NEW: orient all faces outward for the closed shell ----
+    # ---- Orient all faces outward for the closed shell ----
     pfaces_or, wfaces_or, sfaces_or = orient_outward_with_pymeshlab(
         ppoints, pfaces, wpoints, wfaces, side_points, side_faces,
         use_weld=False, weld_tol=1e-7, rays=128, parity_sampling=True
@@ -238,12 +255,14 @@ def generate_one(radius: float, thickness: float, theta_res: int, phi_res: int,
 
     # Assemble BC-tagged triangles using oriented faces
     tris: List[Dict] = []
-    tris += _faces_to_tri_dicts(ppoints, pfaces_or, 'dirichlet', 1.0)  # pial outer
-    tris += _faces_to_tri_dicts(wpoints, wfaces_or, 'dirichlet', 0.0)  # white inner
-    tris += _faces_to_tri_dicts(side_points, sfaces_or, 'neumann', 0.0)  # equatorial band
+    tris += _faces_to_tri_dicts(ppoints, pfaces_or, 'dirichlet', 1.0)   # pial outer
+    tris += _faces_to_tri_dicts(wpoints, wfaces_or, 'dirichlet', 0.0)   # white inner (shifted)
+    tris += _faces_to_tri_dicts(side_points, sfaces_or, 'neumann', 0.0) # equatorial band
 
-    # Seeds at north pole (+z) / (note: preserved exactly as your original)
-    inner_seed = np.array([0.0, 0.0, radius + 0.0], dtype=float)
+    # Seeds:
+    # - inner_seed moves with the inner hemisphere.
+    # - outer_seed stays where it was (you can change this if your solver expects something else).
+    inner_seed = np.array([0.0, 0.0, radius + 0.0], dtype=float) + shift_vec
     outer_seed = np.array([0.0, 0.0, -(radius + thickness)], dtype=float)
 
     # Naming: "{R}mm_{t}" and "{R}mm_{t}_os"
@@ -262,7 +281,12 @@ def generate_one(radius: float, thickness: float, theta_res: int, phi_res: int,
         }, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     np.save(os_path, outer_seed)
-    print(f"  saved {pkl_path.name}  (V: w={wpoints.shape[0]}, p={ppoints.shape[0]}, s={side_points.shape[0]})")
+    print(
+        f"  saved {pkl_path.name}  "
+        f"(V: w={wpoints.shape[0]}, p={ppoints.shape[0]}, s={side_points.shape[0]}, "
+        f"shift={inner_shift:g}mm along {inner_shift_axis})"
+    )
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate zipped upper hemispheres at multiple thicknesses",
@@ -270,10 +294,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--inner-radius', type=float, default=15.0, help='Inner radius R [mm]')
     p.add_argument('--thicknesses', type=float, nargs='+', default=[0.25, 0.5, 1.0, 2.0, 3.0, 4.0],
                    help='List of radial gaps (outer-inner) [mm]')
-    p.add_argument('--theta-res', type=int, default=60, help='Azimuthal resolution (longitude divisions)')
-    p.add_argument('--phi-res', type=int, default=30, help='Polar resolution (pole→equator divisions)')
+    p.add_argument('--theta-res', type=int, default=30, help='Azimuthal resolution (longitude divisions)')
+    p.add_argument('--phi-res', type=int, default=15, help='Polar resolution (pole→equator divisions)')
+    p.add_argument(
+        '--inner-shift',
+        type=float,
+        default=0.5,
+        help='Translate inner hemisphere by this distance [mm] away from outer shell (0 = concentric)'
+    )
+    p.add_argument(
+        '--inner-shift-axis',
+        type=str,
+        choices=['x', 'y', 'z'],
+        default='z',
+        help='Axis along which to shift the inner hemisphere'
+    )
     p.add_argument('--out-dir', type=Path,
-                   default=Path(r'C:/Users/uqasnell/Documents/GitHub/laplace_thickness/validation/data/analytical/hemispheres'),
+                   default=Path(r'C:/Users/uqasnell/Documents/GitHub/laplace_thickness/validation/data/analytical/shifted_hemis'),
                    help='Output directory')
     return p.parse_args()
 
@@ -286,6 +323,7 @@ def main() -> None:
     print(f"Inner radius: {args.inner_radius} mm | theta_res: {args.theta_res} | phi_res: {args.phi_res}")
     print(f"Thicknesses: {', '.join(_fmt(t) for t in args.thicknesses)} mm")
     print(f"Hemisphere: upper (z>=0)")
+    print(f"Inner shift: {args.inner_shift:g} mm along {args.inner_shift_axis}-axis")
     print(f"Output dir: {out_dir.resolve()}\n")
 
     for t in args.thicknesses:
@@ -296,6 +334,8 @@ def main() -> None:
             theta_res=args.theta_res,
             phi_res=args.phi_res,
             out_dir=out_dir,
+            inner_shift=args.inner_shift,
+            inner_shift_axis=args.inner_shift_axis,
         )
 
     print("\nDone.")
