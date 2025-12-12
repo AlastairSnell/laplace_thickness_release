@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: laplace_thickness_release
+Version: 0.1.0
+Summary: Laplace thickness: BEM + tracing utilities
+Requires-Python: >=3.10
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: scipy
+Requires-Dist: numba
+Requires-Dist: vtk

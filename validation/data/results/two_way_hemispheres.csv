@@ -1,8 +1,0 @@
-level,file,truth_mm,n_paths,pct_geo_lt_0.05mm,pct_haus_lt_0.07mm,pct_asym_lt_1pct
-file,15mm_0.25_paths.csv,33.0,100,100.0,100.0,100.0
-file,15mm_0.5_paths.csv,33.0,100,100.0,100.0,100.0
-file,15mm_1_paths.csv,33.0,100,100.0,100.0,100.0
-file,15mm_2_paths.csv,33.0,100,100.0,100.0,100.0
-file,15mm_4_paths.csv,33.0,100,100.0,100.0,100.0
-truth,TRUTH_33.0,33.0,500,100.0,100.0,100.0
-overall,ALL,,500,100.0,100.0,100.0
