@@ -1,5 +1,4 @@
-````markdown
-# Laplace Thickness
+## Laplace Thickness
 
 Command-line tool for computing cortical thickness on surface patches using a BEM Laplace solve + gradient-flow tracing.
 
@@ -92,11 +91,8 @@ Key points:
 * Sampling density for the heatmap is controlled by:
 
   ```bash
-  --heatmap-spacing <float>
+  --heatmap-spacing 1
   ```
 where the default is maximal density.
 
 If `--heatmap-pct` is set above `50`, results are less reliable.
-
-```
-```
