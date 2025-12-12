@@ -1,4 +1,4 @@
-## Laplace Thickness
+# Laplace Thickness
 
 Command-line tool for computing cortical thickness on surface patches using a BEM Laplace solve + gradient-flow tracing.
 
