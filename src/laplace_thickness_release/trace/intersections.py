@@ -33,10 +33,12 @@ def segment_triangle_intersection(p0, p1, tri_vertices):
 def find_exit_intersection(p0, p1, all_triangles):
     best_t= 999.9
     best_point= None
-    for tri in all_triangles:
+    best_idx = None
+    for t_idx, tri in enumerate(all_triangles):
         tri_verts= tri['vertices']
         hit, xint, tval= segment_triangle_intersection(p0,p1,tri_verts)
         if hit and tval< best_t:
             best_t= tval
             best_point= xint
-    return best_point
+            best_idx = tri.get("unknown_index", t_idx)
+    return best_point, best_idx

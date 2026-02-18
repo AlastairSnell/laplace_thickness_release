@@ -1,0 +1,36 @@
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+*.dylib
+*.nbc
+*.nbi
+
+# Packaging/build outputs
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local/OS files
+.DS_Store
+Thumbs.db
+
+# Generated validation run artifacts
+validation/tests/twoway_results/
+validation/**/_MASTER_paths.csv
+validation/**/_twoway_testing_run.json

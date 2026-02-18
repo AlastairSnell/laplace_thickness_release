@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Sequence, Tuple, List
+from dataclasses import dataclass
+from typing import Any, Sequence, List
 
 import numpy as np
 from scipy.spatial import KDTree
@@ -8,7 +9,21 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 
 
-__all__ = ["compute_thickness_heatmap"]
+__all__ = ["compute_thickness_heatmap", "HeatmapResult"]
+
+
+@dataclass(frozen=True)
+class HeatmapResult:
+    trimmed_top_tris: List[dict[str, Any]]
+    trimmed_top_vals: np.ndarray
+    trimmed_bottom_tris: List[dict[str, Any]]
+    V_top: np.ndarray
+    F_top: np.ndarray
+    top_vertex_vals: np.ndarray
+    keep_mask_top: np.ndarray
+    V_bottom: np.ndarray | None
+    F_bottom: np.ndarray | None
+    keep_mask_bottom: np.ndarray | None
 
 
 def _build_vertex_graph(triangles: Sequence[dict[str, Any]]):
@@ -143,20 +158,23 @@ def compute_thickness_heatmap(
     lower_bound: float,
     power: float,
     k_neigh: int,
+    heatmap_surface: str = "pial",
     logger: Any | None = None,
-) -> Tuple[List[dict[str, Any]], np.ndarray, List[dict[str, Any]]]:
+) -> HeatmapResult:
     """
-    Build a cortical thickness heatmap on the pial surface using geodesic-IDW,
-    and return:
+    Build a cortical thickness heatmap on the selected surface using geodesic-IDW,
+    and return a HeatmapResult with:
 
-        1) trimmed_top_tris     : list of pial (top) triangles (inner pct patch)
-        2) trimmed_top_vals     : per-triangle thickness values for these pial faces
-        3) trimmed_bottom_tris  : list of bottom (white) triangles cropped to the
-                                  nearest pct% by geodesic distance on the white surface.
+      - trimmed_top_tris   : list of heatmap-surface triangles (inner pct patch)
+      - trimmed_top_vals   : per-triangle thickness values for these faces
+      - trimmed_bottom_tris: list of opposite-surface triangles cropped to the
+                             nearest pct% by geodesic distance on that surface
+      - V_top/F_top/top_vertex_vals/keep_mask_top for vertex-scalar rendering
+      - V_bottom/F_bottom/keep_mask_bottom for opposite surface geometry
 
     Notes:
-      - Geodesics for the heatmap are computed on the pial surface only.
-      - Pial and white surfaces each get their own geodesic graph.
+      - Geodesics for the heatmap are computed on the selected surface only.
+      - The two Dirichlet surfaces each get their own geodesic graph.
       - For both surfaces we keep the INNER pct% of faces (no rim / donut).
     """
     if logger is not None:
@@ -176,7 +194,16 @@ def compute_thickness_heatmap(
             pct,
         )
 
-    # ----------------- Partition triangles into pial / white / side -----------------
+    heatmap_surface = str(heatmap_surface).lower().strip()
+    if heatmap_surface not in {"pial", "white"}:
+        raise ValueError("--heatmap-surface must be 'pial' or 'white'.")
+
+    heatmap_name = "pial" if heatmap_surface == "pial" else "white"
+    other_name = "white" if heatmap_surface == "pial" else "pial"
+    heatmap_bc_value = 1.0 if heatmap_surface == "pial" else 0.0
+    other_bc_value = 0.0 if heatmap_surface == "pial" else 1.0
+
+    # ----------------- Partition triangles into heatmap / other / side -----------------
     top_tris: List[dict[str, Any]] = []
     bottom_tris: List[dict[str, Any]] = []
 
@@ -188,16 +215,22 @@ def compute_thickness_heatmap(
             # side wall: never part of the heatmap patch
             continue
 
-        if bc_type == "dirichlet" and np.isclose(bc_val, 1.0):
+        if bc_type == "dirichlet" and np.isclose(bc_val, heatmap_bc_value):
             top_tris.append(tri)
-        elif bc_type == "dirichlet" and np.isclose(bc_val, 0.0):
+        elif bc_type == "dirichlet" and np.isclose(bc_val, other_bc_value):
             bottom_tris.append(tri)
 
     if not top_tris:
-        raise RuntimeError("No pial faces (Dirichlet bc_value≈1.0) found for heatmap creation.")
+        raise RuntimeError(
+            f"No {heatmap_name} faces (Dirichlet bc_value {heatmap_bc_value:.1f}) found for heatmap creation."
+        )
 
     if logger is not None and not bottom_tris:
-        logger.warning("Heatmap: no white (Dirichlet bc_value≈0.0) faces found – bottom patch will be empty.")
+        logger.warning(
+            "Heatmap: no %s (Dirichlet bc_value %.1f) faces found; opposite patch will be empty.",
+            other_name,
+            other_bc_value,
+        )
 
     # ----------------- Clean sample thickness values -----------------
     sample_coords = np.asarray(sample_coords, dtype=float)
@@ -211,10 +244,10 @@ def compute_thickness_heatmap(
         logger=logger,
     )
 
-    # ----------------- Build pial-only graph and do IDW -----------------
+    # ----------------- Build heatmap-surface graph and do IDW -----------------
     V_top, F_top, A_top = _build_vertex_graph(top_tris)
 
-    pial_thick_by_vert = _geodesic_idw(
+    heatmap_thick_by_vert = _geodesic_idw(
         V_top,
         A_top,
         sample_coords,
@@ -223,24 +256,25 @@ def compute_thickness_heatmap(
         logger=logger,
     )
 
-    # ----------------- Seed on pial surface (centre of samples) -----------------
+    # ----------------- Seed on heatmap surface (centre of samples) -----------------
     kd_top = KDTree(V_top)
     seed_xyz = sample_coords.mean(axis=0)
     seed_vert_idx_top = int(kd_top.query(seed_xyz)[1])
 
     if logger is not None:
         logger.info(
-            "Computing seed-to-vertex geodesics on pial surface from vertex %d.",
+            "Computing seed-to-vertex geodesics on %s surface from vertex %d.",
+            heatmap_name,
             seed_vert_idx_top,
         )
 
     seed_dist_top = dijkstra(A_top, directed=False, indices=[seed_vert_idx_top])[0]
 
-    # Per-face distance and value on pial surface
+    # Per-face distance and value on heatmap surface
     face_dist_top = seed_dist_top[F_top].mean(axis=1)           # (F_top,)
-    face_vals_top = pial_thick_by_vert[F_top].mean(axis=1)      # (F_top,)
+    face_vals_top = heatmap_thick_by_vert[F_top].mean(axis=1)   # (F_top,)
 
-    # ----------------- Keep INNER pct% of pial faces -----------------
+    # ----------------- Keep INNER pct% of heatmap faces -----------------
     n_pial = face_dist_top.shape[0]
     keep_n_pial = max(1, int(round(n_pial * (pct / 100.0))))
     keep_n_pial = min(n_pial, keep_n_pial)
@@ -250,13 +284,21 @@ def compute_thickness_heatmap(
     keep_mask_top[order_top[:keep_n_pial]] = True
 
     if logger is not None:
-        logger.info("Heatmap: kept %d pial faces (nearest %.1f%%).", int(keep_mask_top.sum()), pct)
+        logger.info(
+            "Heatmap: kept %d %s faces (nearest %.1f%%).",
+            int(keep_mask_top.sum()),
+            heatmap_name,
+            pct,
+        )
 
     trimmed_top_tris: List[dict[str, Any]] = [top_tris[i] for i in np.where(keep_mask_top)[0]]
     trimmed_top_vals = face_vals_top[keep_mask_top]
 
-    # ----------------- Build white-only graph and crop INNER pct% -----------------
+    # ----------------- Build opposite-surface graph and crop INNER pct% -----------------
     trimmed_bottom_tris: List[dict[str, Any]] = []
+    V_bottom = None
+    F_bottom = None
+    keep_mask_bottom = None
 
     if bottom_tris:
         V_bottom, F_bottom, A_bottom = _build_vertex_graph(bottom_tris)
@@ -267,7 +309,8 @@ def compute_thickness_heatmap(
 
         if logger is not None:
             logger.info(
-                "Computing seed-to-vertex geodesics on white surface from vertex %d.",
+                "Computing seed-to-vertex geodesics on %s surface from vertex %d.",
+                other_name,
                 seed_vert_idx_bottom,
             )
 
@@ -287,7 +330,8 @@ def compute_thickness_heatmap(
             # Very defensive fallback – should basically never happen.
             if logger is not None:
                 logger.warning(
-                    "Heatmap: cropped white patch is empty at pct=%.1f; falling back to all white faces.",
+                    "Heatmap: cropped %s patch is empty at pct=%.1f; falling back to all faces.",
+                    other_name,
                     pct,
                 )
             keep_mask_bottom[:] = True
@@ -296,9 +340,25 @@ def compute_thickness_heatmap(
         trimmed_bottom_tris = [bottom_tris[i] for i in np.where(keep_mask_bottom)[0]]
 
         if logger is not None:
-            logger.info("Heatmap: kept %d bottom faces (nearest %.1f%%).", n_kept, pct)
+            logger.info(
+                "Heatmap: kept %d %s faces (nearest %.1f%%).",
+                n_kept,
+                other_name,
+                pct,
+            )
     else:
         if logger is not None:
-            logger.warning("Heatmap: no white (bc_value≈0.0) faces found.")
+            logger.warning("Heatmap: no %s (bc_value %.1f) faces found.", other_name, other_bc_value)
 
-    return trimmed_top_tris, trimmed_top_vals, trimmed_bottom_tris
+    return HeatmapResult(
+        trimmed_top_tris=trimmed_top_tris,
+        trimmed_top_vals=trimmed_top_vals,
+        trimmed_bottom_tris=trimmed_bottom_tris,
+        V_top=V_top,
+        F_top=F_top,
+        top_vertex_vals=heatmap_thick_by_vert,
+        keep_mask_top=keep_mask_top,
+        V_bottom=V_bottom,
+        F_bottom=F_bottom,
+        keep_mask_bottom=keep_mask_bottom,
+    )

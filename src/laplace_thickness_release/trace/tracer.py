@@ -16,6 +16,8 @@ def path_trace_simple_bem(
     alpha_initial=0.05,
     first_step=0.05,
     *,
+    seed_dir=None,
+    seed_face_idx=None,
     debug=False,
     angle_max_deg=30.0,
 ):
@@ -40,28 +42,46 @@ def path_trace_simple_bem(
     total_length = 0.0
     x_current    = start_pt.copy()
     prev_step_dir = None
+    used_prev_dir_steps = 0
+    dir_steps = 0
+    terminated_by_max_iter = True
+    exit_tri_idx = None
 
     # --- seed: push safely into the interior and align with -∇φ (for 'down') ---
     # 1) get a provisional surface normal (your routine, or infer per-cap)
     # --- seed step (step 0) along average normal (NO pre-flip)
 
-    verts_arr, norms_arr, areas_arr, cents_arr = \
-        triangles_to_numeric_full(triangles)
-
-    avg_normal = compute_meyer_normal_jit(
-        x_current, verts_arr, norms_arr, areas_arr, cents_arr,
-        radius=-1.0, eps=1e-12, debug=False)
-
-    if avg_normal is not None and np.linalg.norm(avg_normal) > 0:
-        seed_dir    = avg_normal / np.linalg.norm(avg_normal)
-        x_current = x_current + first_step * seed_dir
-        total_length += first_step
-        path_points.append(x_current.copy())
-        prev_step_dir = seed_dir.copy()
-        dbg(f"[SEED] moved {first_step:.5f}; seed_dir={seed_dir}")
+    if seed_dir is not None:
+        seed_dir = np.asarray(seed_dir, dtype=float)
+        n = np.linalg.norm(seed_dir)
+        if n > 0:
+            seed_dir = seed_dir / n
+            x_current = x_current + first_step * seed_dir
+            total_length += first_step
+            path_points.append(x_current.copy())
+            prev_step_dir = seed_dir.copy()
+            dbg(f"[SEED] moved {first_step:.5f}; seed_dir={seed_dir}")
+        else:
+            prev_step_dir = None
+            dbg("[SEED] provided seed_dir had zero length; skipping seed move")
     else:
-        prev_step_dir = None
-        dbg("[SEED] no normal; skipping seed move")
+        verts_arr, norms_arr, areas_arr, cents_arr = \
+            triangles_to_numeric_full(triangles)
+
+        avg_normal = compute_meyer_normal_jit(
+            x_current, verts_arr, norms_arr, areas_arr, cents_arr,
+            radius=-1.0, eps=1e-12, debug=False, base_idx=seed_face_idx)
+
+        if avg_normal is not None and np.linalg.norm(avg_normal) > 0:
+            seed_dir    = avg_normal / np.linalg.norm(avg_normal)
+            x_current = x_current + first_step * seed_dir
+            total_length += first_step
+            path_points.append(x_current.copy())
+            prev_step_dir = seed_dir.copy()
+            dbg(f"[SEED] moved {first_step:.5f}; seed_dir={seed_dir}")
+        else:
+            prev_step_dir = None
+            dbg("[SEED] no normal; skipping seed move")
 
     # --- main loop ---
     for it in range(1, max_iter + 1):
@@ -71,6 +91,7 @@ def path_trace_simple_bem(
         # 2) Check gradient validity
         if not np.all(np.isfinite(g)) or np.linalg.norm(g) < 1e-12:
             dbg(f"[{it:03}] gradient too small or invalid → stop")
+            terminated_by_max_iter = False
             break
 
         # 3) Candidate direction from gradient (unit)
@@ -87,6 +108,7 @@ def path_trace_simple_bem(
                 # If flip is too large, ignore gradient direction
                 # and reuse the *previous USED* direction
                 used_dir = prev_step_dir
+                used_prev_dir_steps += 1
                 dbg(
                     f"[{it:03}] ∠flip {ang:.2f}° > {angle_max_deg}° "
                     f"→ reuse prev_step_dir"
@@ -97,11 +119,12 @@ def path_trace_simple_bem(
                 )
 
         # 5) Propose step with FIXED alpha
+        dir_steps += 1
         old_pt = x_current.copy()
         new_pt = old_pt + alpha_initial * used_dir  # alpha is constant
 
         # 6) Exit detection: intersect with boundary (e.g., bottom cap)
-        X_int = find_exit_intersection(old_pt, new_pt, triangles)
+        X_int, tri_idx = find_exit_intersection(old_pt, new_pt, triangles)
         if X_int is not None:
             seg = np.linalg.norm(X_int - old_pt)
             if seg > 1e-8:
@@ -110,6 +133,8 @@ def path_trace_simple_bem(
                 dbg(f"[{it:03}] EXIT (len={seg:.5f})")
             else:
                 dbg(f"[{it:03}] EXIT at start (ε) — stopping")
+            terminated_by_max_iter = False
+            exit_tri_idx = tri_idx
             break
 
         # 7) Accept full step
@@ -122,4 +147,10 @@ def path_trace_simple_bem(
         prev_step_dir = used_dir.copy()
 
     dbg(f"[DONE] steps={len(path_points)-1}, total_len={total_length:.5f}")
-    return path_points, total_length
+    return path_points, total_length, {
+        "steps": len(path_points) - 1,
+        "dir_steps": dir_steps,
+        "used_prev_dir_steps": used_prev_dir_steps,
+        "terminated_by_max_iter": terminated_by_max_iter,
+        "exit_tri_idx": exit_tri_idx,
+    }

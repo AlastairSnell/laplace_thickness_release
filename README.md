@@ -1,98 +1,119 @@
 ## Laplace Thickness
 
-Command-line tool for computing cortical thickness on surface patches using a BEM Laplace solve + gradient-flow tracing.
+Command-line tooling for cortical thickness on surface patches using a BEM Laplace solve and gradient-flow tracing.
 
 Main entrypoint:
 
 ```bash
 python -m laplace_thickness_release.main.main
-````
+```
 
-All commands assume you are in the repo root with pyproject.toml
+All commands below assume the current working directory is the repository root (the folder containing `pyproject.toml`).
 
 ---
 
 ## Installation
 
-Install the package in editable mode:
+Core package:
 
 ```bash
 python -m pip install -e .
 ```
----
 
-## Examples from the paper
-
-The `validation/data/paper_examples/` folder contains the patches used in the manuscript figures.
-
-### Technical example: single test patch
-
-This is the basic “technical” example in the paper: default streamline tracing on a single cortical patch:
+Validation/data tooling dependencies:
 
 ```bash
-python -m laplace_thickness_release.main.main \
-  --mesh validation/data/paper_examples/zipped_patch_000.vtk
----
-
-## Streamline tracing
-
-Trace pial to white surface and plot the the streamlines:
-
-```bash
-python -m laplace_thickness_release.main.main \
-  --mesh validation/data/folds_selected/zipped_patch_004.vtk
-```
-
-Parallelised version (recommended):
-
-```bash
-python -m laplace_thickness_release.main.main \
-  --mesh validation/data/folds_selected/zipped_patch_004.vtk \
-  --parallel
-```
-
-Default number of workers is set to the number of available CPUs, but this can be changed:
-
-```bash
-python -m laplace_thickness_release.main.main \
-  --mesh validation/data/folds_selected/zipped_patch_004.vtk \
-  --parallel --workers 8
-```
-
-Spatial density of paths in tracing mode is controlled by:
-
-```bash
---trace-spacing <float>
+python -m pip install -e ".[validation]"
 ```
 
 ---
 
-## Heatmap mode
+## Input Requirement for `main.py`
 
-Thickness heatmap on the pial surface:
+`main.py` expects a prebuilt patch mesh (`.vtk` or `.vtp`) with required cell arrays:
+- `bc_type`
+- `bc_value`
+- `normal`
+
+Raw FreeSurfer `pial` and `white` surfaces are not consumed directly by `main.py`; convert them first with `validation/scripts/patch_maker.py`.
+
+---
+
+## Heatmap Example
+
+Run heatmap generation on an included example patch:
 
 ```bash
 python -m laplace_thickness_release.main.main \
-  --mesh validation/data/folds_selected/zipped_patch_004.vtk \
+  --mesh validation/data/folds_selected/zipped_patch_000.vtk \
   --heatmap \
   --parallel
 ```
 
-Key points:
+---
 
-* Only down-tracing is used in heatmap mode.
+## Patch Generation from FreeSurfer
 
-* A central inner patch of the pial surface is kept; default:
+Create one zipped patch (`.vtk`) from FreeSurfer surfaces.
 
-  ```bash
-  --heatmap-pct 50.0
-  ```
+Region mode (`aparc` labels):
 
-* Sampling density for the heatmap is controlled by:
+```bash
+python validation/scripts/patch_maker.py \
+  --fs-surf-dir path/to/subject/surf \
+  --aparc-dir path/to/subject/label \
+  --region-name supramarginal \
+  --hemi lh \
+  --out-dir validation/data/new_folds
+```
 
-  ```bash
-  --heatmap-spacing 1
-  ```
-where the default is maximal density.
+Surface-RAS mode:
 
-If `--heatmap-pct` is set above `50`, results are less reliable.
+```bash
+python validation/scripts/patch_maker.py \
+  --fs-surf-dir path/to/subject/surf \
+  --surface-ras "[12.3,-45.6,78.9]" \
+  --out-dir validation/data/new_folds
+```
+
+Notes:
+- Do not combine `--region-name` and `--surface-ras`.
+- `--hemi` is required when using `--region-name`.
+- `--surface-ras` must be the "Surface RAS" coordinate from Freeview.
+
+---
+
+## Two-Way Validation on `validation/data`
+
+Run two-way testing over selected subfolders under `validation/data`:
+
+```bash
+python validation/scripts/twoway_testing.py \
+  --data-root validation/data \
+  --subfolders analytical/hemispheres analytical/shifted_hemis phantoms_final folds_selected perturbed \
+  --pattern "*.vtk" \
+  --outdir validation/tests/twoway_results_run01
+```
+
+Summarize generated per-surface CSVs:
+
+```bash
+python validation/scripts/twoway_analysis.py \
+  --results-dir validation/tests/twoway_results_run01 \
+  --pattern "*_paths.csv"
+```
+
+This writes:
+- `two_way_summary.csv`
+- `two_way_summary_table.png`
+
+Operational note:
+- `twoway_testing.py` appends to the master CSV in `--outdir`. Use a fresh output directory per run to avoid mixing runs.
+
+---
+
+## License
+
+This repository is released under the MIT License (`LICENSE`).
+Use, modification, redistribution, and commercial use are permitted.
+

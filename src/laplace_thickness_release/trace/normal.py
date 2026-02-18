@@ -1,3 +1,5 @@
+from typing import Sequence
+
 import numpy as np
 
 def triangles_to_numeric_full(triangles):
@@ -59,7 +61,8 @@ def compute_meyer_normal_jit(pt,
                              cents_arr,
                              radius=-1.0,
                              eps=1e-12,
-                             debug=False):
+                             debug=False,
+                             base_idx=None):
     """
     Meyer-style area-weighted pseudo-normal at arbitrary point `pt`.
 
@@ -71,7 +74,8 @@ def compute_meyer_normal_jit(pt,
     # ----------------------------------------------------------------------
     # 1) Find the face whose centroid is closest to `pt`
     # ----------------------------------------------------------------------
-    base_idx = closest_centroid_idx(pt, cents_arr)
+    if base_idx is None or base_idx < 0 or base_idx >= n_faces:
+        base_idx = closest_centroid_idx(pt, cents_arr)
     if base_idx == -1:
         return norms_arr[0]          # degenerate fallback
 
@@ -143,3 +147,60 @@ def compute_meyer_normal_jit(pt,
         n_sum *= -1.0
 
     return -n_sum
+
+
+def build_surface_vertex_normals(
+    triangles: Sequence[dict],
+    *,
+    bc_value: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build per-vertex normals for the Dirichlet surface with the given bc_value.
+
+    Normals are area-weighted averages of adjacent face normals.
+
+    Returns
+    -------
+    V : (n, 3) float64
+        Unique surface vertices (in insertion order).
+    N : (n, 3) float64
+        Unit normals per vertex.
+    """
+    verts_map: dict[tuple[float, float, float], int] = {}
+    acc = []
+
+    for tri in triangles:
+        if str(tri.get("bc_type", "")).lower() != "dirichlet":
+            continue
+        if not np.isclose(float(tri.get("bc_value", 0.0)), float(bc_value)):
+            continue
+
+        verts = np.asarray(tri["vertices"], dtype=np.float64)
+        n = np.asarray(tri.get("normal", [0.0, 0.0, 0.0]), dtype=np.float64)
+
+        area = float(tri.get("area", 0.0))
+        if area <= 0.0:
+            e1 = verts[1] - verts[0]
+            e2 = verts[2] - verts[0]
+            area = 0.5 * float(np.linalg.norm(np.cross(e1, e2)))
+
+        for v in verts:
+            key = tuple(np.asarray(v, dtype=np.float64))
+            idx = verts_map.get(key)
+            if idx is None:
+                idx = len(verts_map)
+                verts_map[key] = idx
+                acc.append(np.zeros(3, dtype=np.float64))
+            acc[idx] += n * area
+
+    if not verts_map:
+        raise ValueError(f"No Dirichlet surface vertices found for bc_value={bc_value}.")
+
+    V = np.asarray(list(verts_map.keys()), dtype=np.float64)
+    N = np.asarray(acc, dtype=np.float64)
+
+    lens = np.linalg.norm(N, axis=1)
+    good = lens > 0.0
+    N[good] = N[good] / lens[good, None]
+
+    return V, N
