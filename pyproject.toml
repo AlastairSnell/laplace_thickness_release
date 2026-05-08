@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laplace_thickness_release"
+version = "0.1.0"
+description = "Laplace thickness: BEM + tracing utilities"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "matplotlib",
+  "scipy",
+  "numba",
+  "vtk",
+]
+
+[project.optional-dependencies]
+mesh-intersections = [
+  "trimesh",
+  "rtree",
+]
+pyvista = [
+  "pyvista",
+]
+validation = [
+  "pyvista",
+  "nibabel",
+  "pandas",
+  "trimesh",
+  "rtree",
+  "pymeshlab",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
