@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python validation/scripts/process_folds.py)",
-      "Bash(python -c \"import nibabel; print\\('nibabel OK', nibabel.__version__\\)\")"
-    ]
-  }
-}
